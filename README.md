@@ -1,11 +1,23 @@
-# Deprecated!
+# Rebirth!
 
-As of Feb 11th 2020, request is fully deprecated. No new changes are expected to land. In fact, none have landed for some time.
+The `request` library is undoubtedly one of the most influential libraries in Node.js. It was first released in 2011 as one of the earliest libraries in Node.js and npm, and it reached 25.7k stars on GitHub by 2019. Unfortunately, the author announced its deprecation in 2019. The reason was not due to any functional issues; in fact, its stream functionality is still among the best. Neither of its successors, Axios nor Got, comes close to request in this regard. The author believed the code was outdated and didn’t have the energy to rewrite the entire library using ES6.
+
+`@wiajs/request` has forked `request` and rewritten the entire library using `ES6` and the latest Node.js `http`, `https`, and `stream.Duplex`. The focus was to retain its powerful stream capabilities.
+
+How does it compare to the currently most popular library, `Axios`?
+
+`Axios` lacks stream functionality, and the goal of rewriting request was precisely to fork `Axios` and replace Axios's transport layer to make up for this shortcoming.
+
+- `@wiajs/request` (forked from `request`) provides powerful stream capabilities.
+- `@wiajs/req` (forked from `axios`) provides powerful data handling capabilities.
+- `@wiajs/request`, as the default transport for `@wiajs/req`, provides both powerful data handling and stream capabilities, as well as perfect proxy support.
+- `@wiajs/request` is the rebirth version of request.
+- `@wiajs/req` is a better version of axios.
 
 For more information about why request is deprecated and possible alternatives refer to
 [this issue](https://github.com/request/request/issues/3142).
 
-# Request - Simplified HTTP client
+# @wiajs/Request - Simplified HTTP client
 
 [![npm package](https://nodei.co/npm/request.png?downloads=true&downloadRank=true&stars=true)](https://nodei.co/npm/request/)
 

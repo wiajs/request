@@ -72,6 +72,11 @@ export default class Caseless {
     delete this.dict[has]
   }
 
+  /**
+   * 
+   * @param {string} name 
+   * @returns 
+   */
   del(name) {
     name = String(name).toLowerCase()
     let deleted = false
@@ -96,19 +101,41 @@ export default class Caseless {
 export function httpify(resp, headers) {
   const c = new Caseless(headers)
 
+  /**
+   * 
+   * @param {string} key 
+   * @param {*} value 
+   * @param {*} clobber 
+   * @returns 
+   */
   resp.setHeader = (key, value, clobber) => {
     if (typeof value === 'undefined') return
     return c.set(key, value, clobber)
   }
 
+  /**
+   * 
+   * @param {string} key 
+   * @returns {boolean|string}
+   */
   resp.hasHeader = key => {
     return c.has(key)
   }
 
+  /**
+   * 
+   * @param {string} key 
+   * @returns {*}
+   */
   resp.getHeader = key => {
     return c.get(key)
   }
 
+  /**
+   * 
+   * @param {string} key 
+   * @returns {boolean}
+   */
   resp.removeHeader = key => {
     return c.del(key)
   }

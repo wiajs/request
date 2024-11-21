@@ -10,7 +10,7 @@ import replace from '@rollup/plugin-replace' // 替换待打包文件里的一�
 
 import {getJsOpt, getTsOpt} from './swc.js'
 
-import pkg from '../package.json' assert {type: 'json'}
+import pkg from '../package.json' with {type: 'json'} // asset 报错
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 

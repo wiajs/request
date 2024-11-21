@@ -83,9 +83,8 @@ function request(uri, options, callback) {
   let R = null
 
   try {
-    log({uri, options}, 'request')
-
     const {opts, cb} = init(uri, options, callback)
+    // log({uri, options, opts}, 'request')
     R = new Request(opts, cb)
   } catch (e) {
     log.err(e, 'request')

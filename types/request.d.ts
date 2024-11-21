@@ -1,0 +1,55 @@
+export default class Request extends stream.Duplex {
+    constructor(opts: {
+        headers: {
+            [x: string]: string;
+        };
+        method: string;
+        protocol: string;
+    } & any, resCallback: any);
+    _timeout: number;
+    socket: any;
+    _currentRequest: http.ClientRequest;
+    response: stream.Readable;
+    responseStream: stream.Readable;
+    timing: boolean;
+    responseStarted: boolean;
+    responseStartTime: number;
+    _destdata: boolean;
+    _paused: boolean;
+    _respended: boolean;
+    pipesrc: stream.Readable;
+    pipedests: stream.Writable[];
+    startTimer: any;
+    opt: any;
+    headers: any;
+    _ended: boolean;
+    _ending: boolean;
+    _redirectCount: number;
+    _redirects: any[];
+    _requestBodyLength: number;
+    _requestBodyBuffers: any[];
+    resCallback: any;
+    _onResponse: (res: http.IncomingMessage) => void;
+    request(): any;
+    abort(): void;
+    destroy(error: any): this;
+    write(chunk: any, encoding?: BufferEncoding | undefined, cb?: (error: Error) => void): boolean;
+    end(data: any, encoding: any, callback: any): void;
+    hasHeader(name: string): any;
+    getHeader(name: string): string;
+    setHeader(name: string, value: any): void;
+    removeHeader(name: string): void;
+    get headersSent(): boolean;
+    setTimeout(msecs: any, callback: any): this;
+    sanitizeOptions(options: any): void;
+    processResponse(response: http.IncomingMessage): void;
+    _isRedirect: boolean;
+    processStream(res: any): any;
+    pipe(dest: stream.Writable, opts: any): stream.Writable;
+    unpipe(dest: stream.Writable): this;
+    pipeDest(dest: any): void;
+    pause(...args: any[]): this;
+    resume(...args: any[]): this;
+}
+import stream from 'node:stream';
+import http from 'node:http';

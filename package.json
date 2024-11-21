@@ -2,7 +2,7 @@
   "name": "@wiajs/request",
   "description": "Stream HTTP request client.",
   "keywords": ["http", "simple", "util", "utility"],
-  "version": "3.0.7",
+  "version": "3.0.18",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -45,7 +45,7 @@
     "node": ">= 6"
   },
   "dependencies": {
-    "@wiajs/log": "^4.3.10",
+    "@wiajs/log": "^4.3.18",
     "mime-types": "^2.1.35"
   },
   "devDependencies": {

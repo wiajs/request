@@ -17,6 +17,14 @@ import Caseless from './caseless.js'
 
 const log = Log({env: `wia:req:${name(import.meta.url)}`}) // __filename
 
+/** 
+ * @typedef {object} Opts
+ * @prop {Object.<string,string>} headers
+ * @prop {string} host
+ * @prop {string} method
+ * @prop {string} protocol
+ */ 
+
 const httpModules = {'http:': http, 'https:': https}
 
 const zlibOptions = {
@@ -31,10 +39,36 @@ const brotliOptions = {
 
 const isBrotliSupported = utils.isFunction(zlib.createBrotliDecompress)
 
+// clientRequest 属性转发
+const writeProps = [
+  'protocol',
+  'method',
+  'path',
+  'host',
+  'reusedSocket',
+  'socket',
+  'closed',
+  'destroyed',
+  'writable',
+  'writableAborted',
+  'writableEnded',
+  'writableCorked',
+  'errored',
+  'writableFinished',
+  'writableHighWaterMark',
+  'writableLength',
+  'writableNeedDrain',
+  'writableObjectMode',
+]
+
+// clientReq 方法转发
+const writeMethods = ['cork', 'flushHeaders', 'setNoDelay', 'setSocketKeepAlive']
+
 // Create handlers that pass events from native requests
+// 在 clientRequest 事件转发
 const writeEvents = [
-  'abort', // 弃用
-  'aborted', // 弃用
+  // 'abort', // 弃用
+  // 'aborted', // 弃用
   'close',
   'connect',
   'continue',
@@ -58,7 +92,7 @@ for (const ev of writeEvents)
     m.redirectReq.emit(ev, ...args) // req 事情映射到 redirectReq 上触发
   }
 
-// stream.Readable
+// stream.Readable，在响应流上转发读流取事件
 // data 单独处理
 const readEvents = ['close', 'end', 'error', 'pause', 'readable', 'resume']
 const readEventEmit = Object.create(null)
@@ -114,20 +148,23 @@ export default class Request extends Duplex {
 
   /**
    * responseCallback 原消息处理回调
-   * @param {*} opts
+   * @param {Opts & *} opts
    * @param {*} resCallback
    */
   constructor(opts, resCallback) {
     super()
     const m = this
 
-    // log({options}, 'constructor');
+    // log({opts}, 'constructor');
 
     // Initialize the request
     m.sanitizeOptions(opts)
+    /** @type {Opts & *} */
     m.opt = opts
     m.headers = opts.headers
+
     // log({opts}, 'constructor')
+
     m._ended = false
     m._ending = false
     m._redirectCount = 0
@@ -139,8 +176,12 @@ export default class Request extends Duplex {
 
     // save the callback if passed
     m.resCallback = resCallback
-    // React to responses of native requests
-    // 接管 response 事件，非重定向，触发 response 事件
+         
+    /**
+     * React to responses of native requests
+     * 接管 response 事件，非重定向，触发 response 事件
+     * @param {http.IncomingMessage} res 
+     */
     m._onResponse = res => {
       try {
         m.processResponse(res)
@@ -149,8 +190,31 @@ export default class Request extends Duplex {
       }
     }
 
-    // 流模式
+    // Proxy all other public ClientRequest methods 'getHeader'
+    for (const method of writeMethods) {
+      // @ts-ignore
+      m[method] = (a, b) => {
+        log(method, {a, b})
+        // @ts-ignore
+        m._currentRequest?.[method](a, b)
+      }
+    }
+
+    // Proxy all public ClientRequest properties
+    // 'aborted', 'connection' 弃用
+    for (const property of writeProps) {
+      Object.defineProperty(m, property, {
+        get() {
+          // @ts-ignore
+          const val = m._currentRequest?.[property]
+          log('get property', {property})
+          return val
+        },
+      })
+    }
+
     if (opts.stream) {
+      // 流模式
       // 被 pipe 作为目标时触发，拷贝 src headers
       m.on(
         'pipe',
@@ -182,7 +246,7 @@ export default class Request extends Duplex {
     }
 
     // Perform the first request
-    // m.request(); // 写入数据时执行，否则 pipe时无法写入header
+    // m.request(); // 写入数据时执行，否则 pipe 时无法写入header
   }
 
   /**
@@ -234,26 +298,8 @@ export default class Request extends Duplex {
       m._currentRequest = req
       req.redirectReq = m
 
-      // Proxy all other public ClientRequest methods
-      for (const method of ['flushHeaders', 'setNoDelay', 'setSocketKeepAlive']) {
-        m[method] = (a, b) => {
-          log.debug(method, {a, b})
-          m._currentRequest[method](a, b)
-        }
-      }
-
-      // Proxy all public ClientRequest properties
-      for (const property of ['aborted', 'connection', 'socket']) {
-        Object.defineProperty(m, property, {
-          get() {
-            const val = m._currentRequest[property]
-            log.debug('get property', {property})
-            return val
-          },
-        })
-      }
-
-      m._currentRequest.once('socket', m.startTimer)
+      // 启动 startTimer
+      if (m.startTimer) m._currentRequest.once('socket', m.startTimer)
 
       // 接收req事件，转发 到 redirectReq 发射
       for (const ev of writeEvents) req.on(ev, writeEventEmit[ev])
@@ -312,8 +358,8 @@ export default class Request extends Duplex {
   destroy(error) {
     const m = this
     if (!m._ended) m.end()
-    else if (m.response) m.response.destroy()
-    else if (m.responseStream) m.responseStream.destroy()
+    if (m.response) m.response.destroy()
+    if (m.responseStream) m.responseStream.destroy()
 
     // m.clearTimeout();
     destroyRequest(m._currentRequest, error)
@@ -332,7 +378,7 @@ export default class Request extends Duplex {
   write(chunk, encoding, cb) {
     const m = this
 
-    log.debug('write', {data: chunk, encoding, callback: cb})
+    log({data: chunk, encoding, callback: cb}, 'write')
 
     // Writing is not allowed if end has been called
     if (m._ending) throw new WriteAfterEndError()
@@ -475,6 +521,8 @@ export default class Request extends Duplex {
      * @param {*} socket
      */
     function startTimer(socket) {
+      if (m.startTimer) m.startTimer = null
+
       if (m._timeout) clearTimeout(m._timeout)
 
       m._timeout = setTimeout(() => {
@@ -512,7 +560,7 @@ export default class Request extends Duplex {
 
     // Start the timer if or when the socket is opened
     if (m.socket) startTimer(m.socket)
-    else m.startTimer = startTimer // 未连接，先登记
+    else m.startTimer = startTimer // 未连接，先登记，连接后启动
 
     // Clean up on events
     m.on('socket', destroyOnTimeout)
@@ -552,11 +600,12 @@ export default class Request extends Duplex {
 
   /**
    * Processes a response from the current native request
-   * @param {*} response
+   * @param {http.IncomingMessage} response
    * @returns
    */
   processResponse(response) {
     const m = this
+    const {opt} = m
 
     // Store the redirected response
     const {statusCode} = response
@@ -578,18 +627,20 @@ export default class Request extends Duplex {
     // If the response is not a redirect; return it as-is
     const {location} = response.headers
 
-    log('processResponse', {statusCode, headers: response.headers})
+    log({statusCode, headers: response.headers}, 'processResponse')
 
     if (!location || m.opt.followRedirects === false || statusCode < 300 || statusCode >= 400) {
       // 非重定向，返回给原始回调处理
       response.responseUrl = m._currentUrl
       response.redirects = m._redirects
-      m.response = response
+
+      if (opt.stream) m.response = response
+
       // Be a good stream and emit end when the response is finished.
       // Hack to emit end on close because of a core bug that never fires end
       response.on('close', () => {
         if (!m._respended) {
-          m.response.emit('end')
+          response.emit('end')
         }
       })
 
@@ -609,7 +660,7 @@ export default class Request extends Duplex {
 
       // Clean up
       m._requestBodyBuffers = []
-      return
+      return // 退出，不继续处理
     }
 
     // The response is a redirect, so abort the current request
@@ -699,7 +750,7 @@ export default class Request extends Duplex {
 
   /**
    * 处理响应stream
-   * 如：解压，透传流，需设置 decompress = false，避免解压数据
+   * 自动解压，透传流，需设置 decompress = false，避免解压数据
    * @param {*} res
    */
   processStream(res) {
@@ -766,6 +817,7 @@ export default class Request extends Duplex {
       }
     }
 
+    // 响应流，用于读
     const responseStream = streams.length > 1 ? stream.pipeline(streams, utils.noop) : streams[0]
     // 将内部 responseStream 可读流 映射到 redirectReq
 
@@ -919,7 +971,7 @@ export default class Request extends Duplex {
   }
 
   /**
-   * 继续read流
+   * 继续read响应流
    * @param  {...any} args
    */
   resume(...args) {
@@ -947,18 +999,30 @@ function destroyRequest(request, error) {
   request.destroy(error)
 }
 
+/**
+ * 
+ * @param {RegExp} regex 
+ * @param {Object.<string, string>} headers 
+ * @returns 
+ */
 function removeMatchingHeaders(regex, headers) {
   let lastValue
-  Object.keys(headers).forEach(k => {
+  for (const k of Object.keys(headers)) {
     if (regex.test(k)) {
       lastValue = headers[k]
       delete headers[k]
     }
-  })
+  }
 
   return lastValue === null || typeof lastValue === 'undefined' ? undefined : String(lastValue).trim()
 }
 
+/**
+ * 
+ * @param {string} subdomain 
+ * @param {string} domain 
+ * @returns 
+ */
 function isSubdomain(subdomain, domain) {
   assert(utils.isString(subdomain) && utils.isString(domain))
   const dot = subdomain.length - domain.length - 1

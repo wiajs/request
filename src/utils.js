@@ -30,14 +30,22 @@ const preservedUrlFields = [
 ]
 
 /**
- *
- * @param {*} code
- * @param {*} message
- * @param {*} baseClass
- * @returns
+ * Create a custom error type.
+ * @param {string} code - The error code.
+ * @param {string} message - The error message.
+ * @param {typeof Error} [baseClass] - The base error class to extend from. Defaults to `Error`.
+ * @returns {typeof Error & { new(properties?: object): CustomErrorInstance }} A custom error constructor.
+ * new(properties?: object) 为构造函数语法，返回 CustomErrorInstance 类型
+ * @typedef {object} CustomErrorInstance
+ * @property {string} code - The error code.
+ * @property {string} message - The error message.
+ * @property {Error | undefined} cause - The optional error cause.
  */
-function createErrorType(code, message, baseClass) {
-  // Create constructor
+function createErrorType(code, message, baseClass) {  
+  /**
+   * Create constructor
+   * @param {*} properties 
+   */
   function CustomError(properties) {
     // istanbul ignore else
     if (isFunction(Error.captureStackTrace)) {
@@ -45,6 +53,7 @@ function createErrorType(code, message, baseClass) {
     }
     Object.assign(this, properties || {})
     this.code = code
+    // @ts-ignore
     this.message = this.cause ? `${message}: ${this.cause.message}` : message
   }
 
@@ -60,6 +69,8 @@ function createErrorType(code, message, baseClass) {
       enumerable: false,
     },
   })
+  
+  // @ts-ignore
   return CustomError
 }
 
@@ -158,6 +169,11 @@ function isURL(value) {
   return URL && value instanceof URL
 }
 
+/**
+ * 
+ * @param {*} rs 
+ * @returns 
+ */
 function isReadStream(rs) {
   return rs.readable && rs.path && rs.mode
 }

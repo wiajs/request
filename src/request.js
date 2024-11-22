@@ -17,13 +17,33 @@ import Caseless from './caseless.js'
 
 const log = Log({env: `wia:req:${name(import.meta.url)}`}) // __filename
 
-/** 
+/**
  * @typedef {object} Opts
  * @prop {Object.<string,string>} headers
  * @prop {string} host
  * @prop {string} method
- * @prop {string} protocol
- */ 
+ * @prop {string} family
+ * @prop {string} path
+ * @prop {'http:' | 'https:'} protocol
+ * @prop {*} agent
+ * @prop {*} agents
+ * @prop {boolean} [stream]
+ * @prop {boolean} [decompress=true]
+ * @prop {*} [transformStream]
+ * @prop {*} [beforeRedirect]
+ * @prop {boolean} [followRedirects]
+ * @prop {number} [maxRedirects=21]
+ * @prop {number} [maxBodyLength = 0]
+ * @prop {*} [trackRedirects]
+ */
+
+/** @typedef {object} ResponseExt
+ * @prop {*[]} [redirects]
+ * @prop {string} [responseUrl]
+ * @prop {number} [responseStartTime]
+ */
+
+/** @typedef { http.IncomingMessage & ResponseExt} Response*/
 
 const httpModules = {'http:': http, 'https:': https}
 
@@ -85,8 +105,9 @@ const writeEvents = [
 ]
 
 const writeEventEmit = Object.create(null)
+
 for (const ev of writeEvents)
-  writeEventEmit[ev] = function (...args) {
+  writeEventEmit[ev] = /** @param  {...any} args */ function (...args) {
     const m = this // 事件回调，this === clientRequest 实例
     log('req event', {ev})
     m.redirectReq.emit(ev, ...args) // req 事情映射到 redirectReq 上触发
@@ -97,14 +118,17 @@ for (const ev of writeEvents)
 const readEvents = ['close', 'end', 'error', 'pause', 'readable', 'resume']
 const readEventEmit = Object.create(null)
 for (const ev of readEvents)
-  readEventEmit[ev] = function (...args) {
+  readEventEmit[ev] = /** @param  {...any} args */ function (...args) {
     const m = this // 事件回调，this === clientRequest 实例
     log('res event', {ev})
     m.redirectReq.emit(ev, ...args) // 向上触发事件
   }
 
 // Error types with codes
-const RedirectionError = utils.createErrorType('ERR_FR_REDIRECTION_FAILURE', 'Redirected request failed')
+const RedirectionError = utils.createErrorType(
+  'ERR_FR_REDIRECTION_FAILURE',
+  'Redirected request failed'
+)
 
 const TooManyRedirectsError = utils.createErrorType(
   'ERR_FR_TOO_MANY_REDIRECTS',
@@ -124,12 +148,13 @@ const WriteAfterEndError = utils.createErrorType('ERR_STREAM_WRITE_AFTER_END', '
  * wrap http.ClientRequest
  */
 export default class Request extends Duplex {
-  _timeout = 0
+  /** @type {NodeJS.Timeout} */
+  _timeout = null
   /** @type {*} */
   socket = null
   /** @type {http.ClientRequest} */
   _currentRequest = null
-  /** @type {stream.Readable} */
+  /** @type {Response} */
   response = null
   /** @type {stream.Readable} */
   responseStream = null
@@ -145,10 +170,16 @@ export default class Request extends Duplex {
   pipedests = [] // pipe dest
   /** @type {*} */
   startTimer = null
+  /** @type {Opts} */
+  opt
+  /** @type {*} */
+  pipefilter
+  /** @type {string} */
+  _currentUrl
 
   /**
    * responseCallback 原消息处理回调
-   * @param {Opts & *} opts
+   * @param {Opts} opts
    * @param {*} resCallback
    */
   constructor(opts, resCallback) {
@@ -159,7 +190,6 @@ export default class Request extends Duplex {
 
     // Initialize the request
     m.sanitizeOptions(opts)
-    /** @type {Opts & *} */
     m.opt = opts
     m.headers = opts.headers
 
@@ -176,17 +206,20 @@ export default class Request extends Duplex {
 
     // save the callback if passed
     m.resCallback = resCallback
-         
+
     /**
      * React to responses of native requests
      * 接管 response 事件，非重定向，触发 response 事件
-     * @param {http.IncomingMessage} res 
+     * @param {Response} res
      */
     m._onResponse = res => {
       try {
         m.processResponse(res)
       } catch (cause) {
-        m.emit('error', cause instanceof RedirectionError ? cause : new RedirectionError({cause: cause}))
+        m.emit(
+          'error',
+          cause instanceof RedirectionError ? cause : new RedirectionError({cause: cause})
+        )
       }
     }
 
@@ -213,32 +246,36 @@ export default class Request extends Duplex {
       })
     }
 
+    // 流模式
     if (opts.stream) {
-      // 流模式
       // 被 pipe 作为目标时触发，拷贝 src headers
       m.on(
         'pipe',
-        /** @type {stream.Readable} */ src => {
+        /** @param {stream.Readable & {headers?: Object.<string, string>}} src */ src => {
           // m.ntick &&
           if (m._currentRequest) {
-            m.emit('error', new Error('You cannot pipe to this stream after the outbound request has started.'))
+            m.emit(
+              'error',
+              new Error('You cannot pipe to this stream after the outbound request has started.')
+            )
           }
 
           m.pipesrc = src
 
           if (utils.isReadStream(src)) {
-            if (!m.hasHeader('content-type')) {
-              m.setHeader('content-type', mime.lookup(src.path))
-            }
+            // @ts-ignore
+            if (!m.hasHeader('content-type')) m.setHeader('content-type', mime.lookup(src.path))
           } else {
+            // 拷贝请求头
             if (src.headers) {
-              for (const h of src.headers) {
-                if (!m.hasHeader(h)) {
-                  m.setHeader(h, src.headers[h])
+              for (const k of Object.keys(src.headers)) {
+                if (!m.hasHeader(k)) {
+                  m.setHeader(k, src.headers[k])
                 }
               }
             }
 
+            // @ts-ignore
             if (src.opt.method && !m.opt.method) m.opt.method = src.opt.method
           }
         }
@@ -246,7 +283,7 @@ export default class Request extends Duplex {
     }
 
     // Perform the first request
-    // m.request(); // 写入数据时执行，否则 pipe 时无法写入header
+    // m.request(); // 创建时不连接，写入数据时连接，否则 pipe 时无法写入header
   }
 
   /**
@@ -278,6 +315,7 @@ export default class Request extends Duplex {
       // 代理以目的网址协议为准
       // If specified, use the agent corresponding to the protocol
       // (HTTP and HTTPS use different types of agents)
+      // agents 优于 agent
       if (agents) {
         const scheme = protocol.slice(0, -1)
         opt.agent = agents[scheme]
@@ -285,7 +323,8 @@ export default class Request extends Duplex {
         // http 非隧道代理模式，模块以代理主机为准，其他以目的网址为准
         // 代理内部会根据代理协议选择 http(s) 发起请求创建连接
         if (protocol === 'http:' && agents.http) {
-          protocol = agents.http.proxy && !agents.http.tunnel ? agents.http.proxy.protocol : protocol
+          protocol =
+            agents.http.proxy && !agents.http.tunnel ? agents.http.proxy.protocol : protocol
         }
       }
 
@@ -294,8 +333,10 @@ export default class Request extends Duplex {
 
       log({opt, protocol}, 'request')
       // Create the native request and set up its event handlers
+      // @ts-ignore
       const req = httpModule.request(opt, m._onResponse)
       m._currentRequest = req
+      // @ts-ignore
       req.redirectReq = m
 
       // 启动 startTimer
@@ -316,7 +357,12 @@ export default class Request extends Duplex {
         // Write the request entity and end
         let i = 0
         const buffers = m._requestBodyBuffers
-        ;(function writeNext(error) {
+
+        /**
+         *
+         * @param {*} error
+         */
+        function writeNext(error) {
           // Only write if this request has not been redirected yet
           /* istanbul ignore else */
           if (req === m._currentRequest) {
@@ -332,7 +378,8 @@ export default class Request extends Duplex {
             // End the request if `end` has been called on us
             else if (m._ended) req.end()
           }
-        })()
+        }
+        writeNext()
       }
 
       R = req
@@ -370,15 +417,15 @@ export default class Request extends Duplex {
   /**
    * Writes buffered data to the current native request
    * 如 request 不存在，则创建连接，pipe 时可写入 header
-   * @param {*} chunk
-   * @param {BufferEncoding=} encoding
-   * @param {(error: Error) => void} [cb]
-   * @returns {boolean}
+   * @override -  重写父类方法
+   * @param {*} chunk - The data chunk to write.
+   * @param {BufferEncoding | ((error: Error | null) => void)} [encoding] - Encoding for string data, or the callback if no encoding is provided.
+   * @param {(error: Error | null) => void} [cb] - Callback to signal the end of the write operation.
+   * @returns {boolean} True if the write was successful, false otherwise.
    */
   write(chunk, encoding, cb) {
     const m = this
-
-    log({data: chunk, encoding, callback: cb}, 'write')
+    log({data: chunk, encoding, cb}, 'write')
 
     // Writing is not allowed if end has been called
     if (m._ending) throw new WriteAfterEndError()
@@ -391,6 +438,7 @@ export default class Request extends Duplex {
       throw new TypeError('data should be a string, Buffer or Uint8Array')
 
     if (utils.isFunction(encoding)) {
+      // @ts-ignore
       cb = encoding
       encoding = null
     }
@@ -398,7 +446,7 @@ export default class Request extends Duplex {
     // Ignore empty buffers, since writing them doesn't invoke the callback
     // https://github.com/nodejs/node/issues/22066
     if (chunk.length === 0) {
-      if (cb) cb()
+      if (cb) cb(null)
       return
     }
 
@@ -406,6 +454,7 @@ export default class Request extends Duplex {
     if (m._requestBodyLength + chunk.length <= m.opt.maxBodyLength) {
       m._requestBodyLength += chunk.length
       m._requestBodyBuffers.push({data: chunk, encoding})
+      // @ts-ignore
       m._currentRequest.write(chunk, encoding, cb)
     }
     // Error when we exceed the maximum body length
@@ -417,40 +466,45 @@ export default class Request extends Duplex {
 
   /**
    * Ends the current native request
-   * @param {*} data
-   * @param {*} encoding
-   * @param {*} callback
+   * @override -  重写父类方法
+   * @param {*} [chunk] - Optional data to write before ending the stream.
+   * @param {BufferEncoding | (() => void)} [encoding] - Encoding for string data, or the callback if no encoding is provided.
+   * @param {() => void} [cb] - Optional callback to signal completion.
+   * @returns {this} The current stream instance, to allow chaining.
    */
-  end(data, encoding, callback) {
+  end(chunk, encoding, cb) {
     const m = this
 
     // Shift parameters if necessary
-    if (utils.isFunction(data)) {
-      callback = data
-      data = null
+    if (utils.isFunction(chunk)) {
+      cb = chunk
+      chunk = null
       encoding = null
     } else if (utils.isFunction(encoding)) {
-      callback = encoding
+      // @ts-ignore
+      cb = encoding
       encoding = null
     }
 
-    // ! 数据写入时连接，pipe 时可设置 header
+    // ! 创建实例时不连接，数据写入时发起连接，连接后无法设置 header，因此 pipe 时可设置 header
     if (!m._currentRequest) m.request()
 
     // Write data if needed and end
-    if (!data) {
+    if (!chunk) {
       m._ended = true
       m._ending = true
-      m._currentRequest.end(null, null, callback)
+      m._currentRequest.end(null, null, cb)
     } else {
       const currentRequest = m._currentRequest
-      m.write(data, encoding, () => {
+      m.write(chunk, encoding, () => {
         m._ended = true
-        currentRequest.end(null, null, callback)
+        currentRequest.end(null, null, cb)
       })
 
       m._ending = true
     }
+
+    return m
   }
 
   /**
@@ -459,7 +513,7 @@ export default class Request extends Duplex {
    * @returns
    */
   hasHeader(name) {
-    return this.opt.headers.includes(name)
+    return Object.keys(this.opt.headers).includes(name)
   }
 
   /**
@@ -474,6 +528,7 @@ export default class Request extends Duplex {
   /**
    * Sets a header value on the current native request
    * @param {string} name
+   * @param {string} value
    */
   setHeader(name, value) {
     this.opt.headers[name] = value
@@ -571,6 +626,10 @@ export default class Request extends Duplex {
     return m
   }
 
+  /**
+   *
+   * @param {*} options
+   */
   sanitizeOptions(options) {
     // Ensure headers are always present
     if (!options.headers) options.headers = {}
@@ -600,7 +659,7 @@ export default class Request extends Duplex {
 
   /**
    * Processes a response from the current native request
-   * @param {http.IncomingMessage} response
+   * @param {Response} response
    * @returns
    */
   processResponse(response) {
@@ -609,7 +668,7 @@ export default class Request extends Duplex {
 
     // Store the redirected response
     const {statusCode} = response
-    if (m.opt.trackRedirects) {
+    if (opt.trackRedirects) {
       m._redirects.push({
         url: m._currentUrl,
         headers: response.headers,
@@ -629,7 +688,7 @@ export default class Request extends Duplex {
 
     log({statusCode, headers: response.headers}, 'processResponse')
 
-    if (!location || m.opt.followRedirects === false || statusCode < 300 || statusCode >= 400) {
+    if (!location || opt.followRedirects === false || statusCode < 300 || statusCode >= 400) {
       // 非重定向，返回给原始回调处理
       response.responseUrl = m._currentUrl
       response.redirects = m._redirects
@@ -670,16 +729,17 @@ export default class Request extends Duplex {
 
     // RFC7231§6.4: A client SHOULD detect and intervene
     // in cyclical redirections (i.e., "infinite" redirection loops).
-    if (++m._redirectCount > m.opt.maxRedirects) throw new TooManyRedirectsError()
+    if (++m._redirectCount > opt.maxRedirects) throw new TooManyRedirectsError()
 
     // Store the request headers if applicable
     let requestHeaders
-    const {beforeRedirect} = m.opt
+    const {beforeRedirect} = opt
     if (beforeRedirect) {
       requestHeaders = {
         // The Host header was set by nativeProtocol.request
+        // @ts-ignore
         Host: response.req.getHeader('host'),
-        ...m.opt.headers,
+        ...opt.headers,
       }
     }
 
@@ -687,23 +747,23 @@ export default class Request extends Duplex {
     // care for methods not known to be safe, […]
     // RFC7231§6.4.2–3: For historical reasons, a user agent MAY change
     // the request method from POST to GET for the subsequent request.
-    const {method} = m.opt
+    const {method} = opt
     if (
-      ((statusCode === 301 || statusCode === 302) && m.opt.method === 'POST') ||
+      ((statusCode === 301 || statusCode === 302) && opt.method === 'POST') ||
       // RFC7231§6.4.4: The 303 (See Other) status code indicates that
       // the server is redirecting the user agent to a different resource […]
       // A user agent can perform a retrieval request targeting that URI
       // (a GET or HEAD request if using HTTP) […]
-      (statusCode === 303 && !/^(?:GET|HEAD)$/.test(m.opt.method))
+      (statusCode === 303 && !/^(?:GET|HEAD)$/.test(opt.method))
     ) {
       m.opt.method = 'GET'
       // Drop a possible entity and headers related to it
       m._requestBodyBuffers = []
-      removeMatchingHeaders(/^content-/i, m.opt.headers)
+      removeMatchingHeaders(/^content-/i, opt.headers)
     }
 
     // Drop the Host header, as the redirect might lead to a different host
-    const currentHostHeader = removeMatchingHeaders(/^host$/i, m.opt.headers)
+    const currentHostHeader = removeMatchingHeaders(/^host$/i, opt.headers)
 
     // If the redirect is relative, carry over the host of the last request
     const currentUrlParts = utils.parseUrl(m._currentUrl)
@@ -740,8 +800,8 @@ export default class Request extends Duplex {
         headers: requestHeaders,
       }
 
-      beforeRedirect(m.opt, responseDetails, requestDetails)
-      m.sanitizeOptions(m.opt)
+      beforeRedirect(opt, responseDetails, requestDetails)
+      m.sanitizeOptions(opt)
     }
 
     // Perform the redirected request
@@ -755,7 +815,7 @@ export default class Request extends Duplex {
    */
   processStream(res) {
     const m = this
-    const {opt: opts} = m
+    const {opt} = m
 
     const streams = [res]
 
@@ -768,14 +828,14 @@ export default class Request extends Duplex {
       headers: res.headers,
     })
 
-    if (opts.transformStream) {
-      opts.transformStream.responseLength = responseLength
-      streams.push(opts.transformStream)
+    if (opt.transformStream) {
+      opt.transformStream.responseLength = responseLength
+      streams.push(opt.transformStream)
     }
 
-    const empty = utils.noBody(opts.method, res.statusCode)
+    const empty = utils.noBody(opt.method, res.statusCode)
     // decompress the response body transparently if required
-    if (opts.decompress !== false && res.headers['content-encoding']) {
+    if (opt.decompress !== false && res.headers['content-encoding']) {
       // if decompress disabled we should not decompress
       // 压缩内容，加入 解压 stream，自动解压，axios v1.2 存在bug，不能自动解压
       // if no content, but headers still say that it is encoded,
@@ -825,7 +885,7 @@ export default class Request extends Duplex {
     responseStream.redirectReq = m // 事情触发时引用
 
     // stream 模式，事件透传到 请求类
-    if (opts.stream) {
+    if (opt.stream) {
       if (m._paused) responseStream.pause()
       // 写入目的流
       for (const dest of m.pipedests) m.pipeDest(dest)
@@ -856,20 +916,26 @@ export default class Request extends Duplex {
   // Read Stream API
 
   /**
+   * 建立读取流管道
    * read stream to write stream
    * pipe 只是建立连接管道，后续自动传输数据
-   * @param {stream.Writable} dest
-   * @param {*} opts
-   * @returns {stream.Writable}
+   * @override -  重写父类方法
+   * @template T - 需要模板
+   * @param {T & stream.Writable} dest - The writable stream to which data is written.
+   * @param {Object} [opts] - Optional configuration object.
+   * @param {boolean} [opts.end=true] - Whether to end the writable stream when the readable stream ends.
+   * @returns {T} The destination stream.
    */
-  pipe(dest, opts) {
+  pipe(dest, opts = {}) {
     const m = this
-
+    // m.pipe()
     // 请求已响应
     if (m.responseStream) {
       // 已有数据，不可pipe
-      if (m._destdata) m.emit('error', new Error('You cannot pipe after data has been emitted from the response.'))
-      else if (m._respended) m.emit('error', new Error('You cannot pipe after the response has been ended.'))
+      if (m._destdata)
+        m.emit('error', new Error('You cannot pipe after data has been emitted from the response.'))
+      else if (m._respended)
+        m.emit('error', new Error('You cannot pipe after the response has been ended.'))
       else {
         // stream.Stream.prototype.pipe.call(self, dest, opts);
         super.pipe(dest, opts) // 建立连接管道，自动传输数据
@@ -896,8 +962,13 @@ export default class Request extends Duplex {
     // 请求已响应
     if (m.responseStream) {
       // 已有数据，不可 unpipe
-      if (m._destdata) m.emit('error', new Error('You cannot unpipe after data has been emitted from the response.'))
-      else if (m._respended) m.emit('error', new Error('You cannot unpipe after the response has been ended.'))
+      if (m._destdata)
+        m.emit(
+          'error',
+          new Error('You cannot unpipe after data has been emitted from the response.')
+        )
+      else if (m._respended)
+        m.emit('error', new Error('You cannot unpipe after the response has been ended.'))
       else {
         // stream.Stream.prototype.pipe.call(self, dest, opts);
         super.unpipe(dest) // 建立连接管道，自动传输数据
@@ -928,7 +999,7 @@ export default class Request extends Duplex {
     if (response?.headers && dest.headers && !dest.headersSent) {
       const caseless = new Caseless(response.headers)
       if (caseless.has('content-type')) {
-        const ctname = caseless.has('content-type')
+        const ctname = /** @type {string} */ (caseless.has('content-type'))
         if (dest.setHeader) {
           dest.setHeader(ctname, response.headers[ctname])
         } else {
@@ -937,7 +1008,7 @@ export default class Request extends Duplex {
       }
 
       if (caseless.has('content-length')) {
-        const clname = caseless.has('content-length')
+        const clname = /** @type {string} */ (caseless.has('content-length'))
         if (dest.setHeader) {
           dest.setHeader(clname, response.headers[clname])
         } else {
@@ -947,37 +1018,32 @@ export default class Request extends Duplex {
     }
 
     if (response?.headers && dest.setHeader && !dest.headersSent) {
-      for (const h of response.headers) {
-        dest.setHeader(h, response.headers[h])
-      }
+      for (const k of Object.keys(response.headers)) dest.setHeader(k, response.headers[k])
+
       dest.statusCode = response.statusCode
     }
 
-    if (m.pipefilter) {
-      m.pipefilter(response, dest)
-    }
+    if (m.pipefilter) m.pipefilter(response, dest)
   }
 
   /**
    * 暂停read流
-   * @param  {...any} args
    */
-  pause(...args) {
+  pause() {
     const m = this
     // 没有流
     if (!m.responseStream) m._paused = true
-    else m.responseStream.pause(...args)
+    else m.responseStream.pause()
     return m
   }
 
   /**
    * 继续read响应流
-   * @param  {...any} args
    */
-  resume(...args) {
+  resume() {
     const m = this
     if (!m.responseStream) m._paused = false
-    else m.responseStream.resume(...args)
+    else m.responseStream.resume()
     return m
   }
 
@@ -1000,10 +1066,10 @@ function destroyRequest(request, error) {
 }
 
 /**
- * 
- * @param {RegExp} regex 
- * @param {Object.<string, string>} headers 
- * @returns 
+ *
+ * @param {RegExp} regex
+ * @param {Object.<string, string>} headers
+ * @returns
  */
 function removeMatchingHeaders(regex, headers) {
   let lastValue
@@ -1014,14 +1080,16 @@ function removeMatchingHeaders(regex, headers) {
     }
   }
 
-  return lastValue === null || typeof lastValue === 'undefined' ? undefined : String(lastValue).trim()
+  return lastValue === null || typeof lastValue === 'undefined'
+    ? undefined
+    : String(lastValue).trim()
 }
 
 /**
- * 
- * @param {string} subdomain 
- * @param {string} domain 
- * @returns 
+ *
+ * @param {string} subdomain
+ * @param {string} domain
+ * @returns
  */
 function isSubdomain(subdomain, domain) {
   assert(utils.isString(subdomain) && utils.isString(domain))

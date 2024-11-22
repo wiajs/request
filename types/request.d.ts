@@ -1,15 +1,9 @@
 export default class Request extends stream.Duplex {
-    constructor(opts: {
-        headers: {
-            [x: string]: string;
-        };
-        method: string;
-        protocol: string;
-    } & any, resCallback: any);
-    _timeout: number;
+    constructor(opts: Opts, resCallback: any);
+    _timeout: NodeJS.Timeout;
     socket: any;
     _currentRequest: http.ClientRequest;
-    response: stream.Readable;
+    response: Response;
     responseStream: stream.Readable;
     timing: boolean;
     responseStarted: boolean;
@@ -20,8 +14,12 @@ export default class Request extends stream.Duplex {
     pipesrc: stream.Readable;
     pipedests: stream.Writable[];
     startTimer: any;
-    opt: any;
-    headers: any;
+    opt: Opts;
+    pipefilter: any;
+    _currentUrl: string;
+    headers: {
+        [x: string]: string;
+    };
     _ended: boolean;
     _ending: boolean;
     _redirectCount: number;
@@ -29,27 +27,55 @@ export default class Request extends stream.Duplex {
     _requestBodyLength: number;
     _requestBodyBuffers: any[];
     resCallback: any;
-    _onResponse: (res: http.IncomingMessage) => void;
-    request(): any;
+    _onResponse: (res: Response) => void;
+    request(): http.ClientRequest;
     abort(): void;
     destroy(error: any): this;
-    write(chunk: any, encoding?: BufferEncoding | undefined, cb?: (error: Error) => void): boolean;
-    end(data: any, encoding: any, callback: any): void;
-    hasHeader(name: string): any;
+    override write(chunk: any, encodingOrCallback?: BufferEncoding | ((error: Error | null) => void), cb?: (error: Error | null) => void): boolean;
+    override end(chunk?: any, encoding?: BufferEncoding | (() => void), cb?: () => void): this;
+    hasHeader(name: string): boolean;
     getHeader(name: string): string;
-    setHeader(name: string, value: any): void;
+    setHeader(name: string, value: string): void;
     removeHeader(name: string): void;
     get headersSent(): boolean;
     setTimeout(msecs: any, callback: any): this;
     sanitizeOptions(options: any): void;
-    processResponse(response: http.IncomingMessage): void;
+    processResponse(response: Response): void;
     _isRedirect: boolean;
     processStream(res: any): any;
-    pipe(dest: stream.Writable, opts: any): stream.Writable;
+    override pipe<T>(dest: T & stream.Writable, opts?: {
+        end?: boolean;
+    }): T;
     unpipe(dest: stream.Writable): this;
     pipeDest(dest: any): void;
-    pause(...args: any[]): this;
-    resume(...args: any[]): this;
+    pause(): this;
+    resume(): this;
 }
+export type Opts = {
+    headers: {
+        [x: string]: string;
+    };
+    host: string;
+    method: string;
+    family: string;
+    path: string;
+    protocol: "http:" | "https:";
+    agent: any;
+    agents: any;
+    stream?: boolean;
+    decompress?: boolean;
+    transformStream?: any;
+    beforeRedirect?: any;
+    followRedirects?: boolean;
+    maxRedirects?: number;
+    maxBodyLength?: number;
+    trackRedirects?: any;
+};
+export type ResponseExt = {
+    redirects?: any[];
+    responseUrl?: string;
+    responseStartTime?: number;
+};
+export type Response = http.IncomingMessage & ResponseExt;
 import stream from 'node:stream';
 import http from 'node:http';

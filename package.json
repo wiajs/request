@@ -2,22 +2,21 @@
   "name": "@wiajs/request",
   "description": "Stream HTTP request client.",
   "keywords": ["http", "simple", "util", "utility"],
-  "version": "3.0.18",
+  "version": "3.0.21",
   "type": "module",
   "main": "index.js",
+  "types": "types/index.d.ts",
   "exports": {
     ".": {
-      "types": {
-        "require": "./index.d.cts",
-        "default": "./index.d.ts"
-      },
       "node": {
+        "import": "./index.js",
         "require": "./dist/request.cjs",
-        "default": "./index.js"
+        "types": "./types/index.d.ts"
       },
       "default": {
+        "import": "./index.js",
         "require": "./dist/request.cjs",
-        "default": "./index.js"
+        "types": "./types/index.d.ts"
       }
     },
     "./package.json": "./package.json"

@@ -1,5 +1,6 @@
 /**
  * from 'https://github.com/follow-redirects/follow-redirects'
+ * used by axios
  * 修改以支持http、https 代理服务器
  * 代理模式下，http or https 请求，取决于 proxy 代理服务器，而不是目的服务器。
  */
@@ -9,6 +10,11 @@ import Request from './request.js'
 import utils from './utils.js'
 
 const log = Log({env: `wia:req:${name(import.meta.url)}`}) // __filename
+
+const WritebBeenAbortedError = utils.createErrorType(
+  'ERR_STREAM_WRITE_BEEN_ABORTED',
+  'Request stream has been aborted'
+)
 
 // Preventive platform detection
 // istanbul ignore
@@ -71,6 +77,7 @@ function init(uri, options, callback) {
 /**
  * Executes a request, following redirects
  * 替换原 http(s).request，参数类似
+ * 需外部调用 end() data.pipe 或stream管道写入数据
  * 注意变参 (options[, callback]) or (url[, options][, callback])
     maxRedirects: _.maxRedirects,
     maxBodyLength: _.maxBodyLength,
@@ -94,7 +101,8 @@ function request(uri, options, callback) {
 }
 
 /**
- * 执行简单的非stream数据请求
+ * 执行简单的数据（支持strean）请求
+ * 非流模式，直接写入数据流，流模式，由管道触发，或手动调用 end() data.pipe 写入数据
  * 复杂数据，请使用 @wiajs/req库（fork from axios），该库封装了当前库，提供了更多功能
  * organize params for patch, post, put, head, del
  * @param {string} verb
@@ -108,7 +116,35 @@ function fn(verb) {
     const {opts, cb} = init(uri, options, callback)
     opts.method = method
     const req = new Request(opts, cb)
-    req.end()
+    const {data, stream} = opts
+    if (!stream) {
+      // 发送数据
+      if (utils.isStream(data)) {
+        // Send the request
+        let ended = false
+        let errored = false
+
+        data.on('end', () => {
+          ended = true
+        })
+
+        data.once(
+          'error',
+          /** @param {*} err */ err => {
+            errored = true
+            req.destroy(err)
+          }
+        )
+
+        data.on('close', () => {
+          if (!ended && !errored) {
+            throw new WritebBeenAbortedError()
+          }
+        })
+
+        data.pipe(req) // 写入数据流
+      } else req.end(data)
+    }
     return req
   }
 }
@@ -121,6 +157,6 @@ request.post = fn('post')
 request.put = fn('put')
 request.patch = fn('patch')
 request.del = fn('delete')
-request['delete'] = fn('delete')
+request.delete = fn('delete')
 
 export default request

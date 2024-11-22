@@ -41,10 +41,10 @@ const preservedUrlFields = [
  * @property {string} message - The error message.
  * @property {Error | undefined} cause - The optional error cause.
  */
-function createErrorType(code, message, baseClass) {  
+function createErrorType(code, message, baseClass) {
   /**
    * Create constructor
-   * @param {*} properties 
+   * @param {*} properties
    */
   function CustomError(properties) {
     // istanbul ignore else
@@ -69,7 +69,7 @@ function createErrorType(code, message, baseClass) {
       enumerable: false,
     },
   })
-  
+
   // @ts-ignore
   return CustomError
 }
@@ -170,9 +170,9 @@ function isURL(value) {
 }
 
 /**
- * 
- * @param {*} rs 
- * @returns 
+ *
+ * @param {*} rs
+ * @returns
  */
 function isReadStream(rs) {
   return rs.readable && rs.path && rs.mode
@@ -268,6 +268,15 @@ function noBody(method, code) {
   )
 }
 
+/**
+ * Determine if a value is a Stream
+ *
+ * @param {*} val The value to test
+ *
+ * @returns {boolean} True if value is a Stream, otherwise false
+ */
+const isStream = val => isObject(val) && isFunction(val.pipe)
+
 export default {
   createErrorType,
   InvalidUrlError,
@@ -281,6 +290,7 @@ export default {
   isObject,
   isURL,
   isReadStream,
+  isStream,
   noop,
   parseUrl,
   spreadUrlObject,

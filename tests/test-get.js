@@ -16,11 +16,11 @@ async function main() {
 
   // const rs = request.get('http://file.bunjs.pub:17247/', res => {
   const rs = request('http://file.bunjs.pub:17247/', {method: 'get'}, res => {
-    let data = ''
+    const responseBuffer = []
 
     // Accumulate the data
     res.on('data', chunk => {
-      data += chunk
+      responseBuffer.push(chunk)
     })
 
     // Resolve the promise once the response ends

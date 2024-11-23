@@ -31,7 +31,8 @@ export default class Request extends stream.Duplex {
     request(): http.ClientRequest;
     abort(): void;
     destroy(error: any): this;
-    override write(chunk: any, encodingOrCallback?: BufferEncoding | ((error: Error | null) => void), cb?: (error: Error | null) => void): boolean;
+    send(): void;
+    override write(chunk: any, encoding?: BufferEncoding | ((error: Error | null) => void), cb?: (error: Error | null) => void): boolean;
     override end(chunk?: any, encoding?: BufferEncoding | (() => void), cb?: () => void): this;
     hasHeader(name: string): boolean;
     getHeader(name: string): string;
@@ -42,7 +43,7 @@ export default class Request extends stream.Duplex {
     sanitizeOptions(options: any): void;
     processResponse(response: Response): void;
     _isRedirect: boolean;
-    processStream(res: any): any;
+    processStream(res: Response): Response | stream.Readable;
     override pipe<T>(dest: T & stream.Writable, opts?: {
         end?: boolean;
     }): T;
@@ -70,6 +71,7 @@ export type Opts = {
     maxRedirects?: number;
     maxBodyLength?: number;
     trackRedirects?: any;
+    data?: any;
 };
 export type ResponseExt = {
     redirects?: any[];

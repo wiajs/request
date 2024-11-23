@@ -35,6 +35,7 @@ const log = Log({env: `wia:req:${name(import.meta.url)}`}) // __filename
  * @prop {number} [maxRedirects=21]
  * @prop {number} [maxBodyLength = 0]
  * @prop {*} [trackRedirects]
+ * @prop {*} [data]
  */
 
 /** @typedef {object} ResponseExt
@@ -43,7 +44,7 @@ const log = Log({env: `wia:req:${name(import.meta.url)}`}) // __filename
  * @prop {number} [responseStartTime]
  */
 
-/** @typedef { http.IncomingMessage & ResponseExt} Response*/
+/** @typedef { http.IncomingMessage & ResponseExt} Response */
 
 const httpModules = {'http:': http, 'https:': https}
 
@@ -85,7 +86,7 @@ const writeProps = [
 const writeMethods = ['cork', 'flushHeaders', 'setNoDelay', 'setSocketKeepAlive']
 
 // Create handlers that pass events from native requests
-// 在 clientRequest 事件转发
+// 在 clientRequest 事件转发写事件
 const writeEvents = [
   // 'abort', // 弃用
   // 'aborted', // 弃用
@@ -93,12 +94,12 @@ const writeEvents = [
   'connect',
   'continue',
   'drain',
-  'error',
+  'error', // 未注册 'error' 事件处理程序，错误将冒泡到全局导致程序崩溃
   'finish',
   'information',
   'pipe',
   // 'response', 由 processResponse 触发
-  'socket',
+  'socket', // 建立连接时触发
   'timeout',
   'unpipe',
   'upgrade',
@@ -109,8 +110,8 @@ const writeEventEmit = Object.create(null)
 for (const ev of writeEvents)
   writeEventEmit[ev] = /** @param  {...any} args */ function (...args) {
     const m = this // 事件回调，this === clientRequest 实例
-    log('req event', {ev})
-    m.redirectReq.emit(ev, ...args) // req 事情映射到 redirectReq 上触发
+    // log('req event', {ev})
+    m.redirectReq.emit(ev, ...args) // 内部请求req 事情转发到 Request
   }
 
 // stream.Readable，在响应流上转发读流取事件
@@ -120,7 +121,7 @@ const readEventEmit = Object.create(null)
 for (const ev of readEvents)
   readEventEmit[ev] = /** @param  {...any} args */ function (...args) {
     const m = this // 事件回调，this === clientRequest 实例
-    log('res event', {ev})
+    // log('res event', {ev})
     m.redirectReq.emit(ev, ...args) // 向上触发事件
   }
 
@@ -227,7 +228,7 @@ export default class Request extends Duplex {
     for (const method of writeMethods) {
       // @ts-ignore
       m[method] = (a, b) => {
-        log(method, {a, b})
+        // log(method, {a, b})
         // @ts-ignore
         m._currentRequest?.[method](a, b)
       }
@@ -240,7 +241,7 @@ export default class Request extends Duplex {
         get() {
           // @ts-ignore
           const val = m._currentRequest?.[property]
-          log('get property', {property})
+          // log('get property', {property})
           return val
         },
       })
@@ -331,7 +332,7 @@ export default class Request extends Duplex {
       const httpModule = httpModules[protocol]
       if (!httpModule) throw TypeError(`Unsupported protocol: ${protocol}`)
 
-      log({opt, protocol}, 'request')
+      // log({opt, protocol}, 'request')
       // Create the native request and set up its event handlers
       // @ts-ignore
       const req = httpModule.request(opt, m._onResponse)
@@ -342,7 +343,16 @@ export default class Request extends Duplex {
       // 启动 startTimer
       if (m.startTimer) m._currentRequest.once('socket', m.startTimer)
 
-      // 接收req事件，转发 到 redirectReq 发射
+      // set tcp keep alive to prevent drop connection by peer
+      req.on(
+        'socket',
+        /** @param {*} socket */ socket => {
+          // default interval of sending ack packet is 1 minute
+          socket.setKeepAlive(true, 1000 * 60)
+        }
+      )
+
+      // 接收req事件，转发 到 request 上发射，网络关闭事件，触发 error
       for (const ev of writeEvents) req.on(ev, writeEventEmit[ev])
 
       // RFC7230§5.3.1: When making a request directly to an origin server, […]
@@ -391,9 +401,11 @@ export default class Request extends Duplex {
     return R
   }
 
+  /**
+   * 写入错误，释放请求，触发 abort 终止事件
+   */
   abort() {
     destroyRequest(this._currentRequest)
-    this._currentRequest.abort()
     this.emit('abort')
   }
 
@@ -415,6 +427,40 @@ export default class Request extends Duplex {
   }
 
   /**
+   * 发送数据
+   */
+  send() {
+    const m = this
+    const {data} = m.opt
+    // 发送数据
+    if (utils.isStream(data)) {
+      // Send the request
+      let ended = false
+      let errored = false
+
+      data.on('end', () => {
+        ended = true
+      })
+
+      data.once(
+        'error',
+        /** @param {*} err */ err => {
+          errored = true
+          // req.destroy(err)
+        }
+      )
+
+      data.on('close', () => {
+        // if (!ended && !errored) {
+        //   throw new WritebBeenAbortedError()
+        // }
+      })
+
+      data.pipe(m) // 写入数据流
+    } else m.end(data)
+  }
+
+  /**
    * Writes buffered data to the current native request
    * 如 request 不存在，则创建连接，pipe 时可写入 header
    * @override -  重写父类方法
@@ -425,10 +471,14 @@ export default class Request extends Duplex {
    */
   write(chunk, encoding, cb) {
     const m = this
-    log({data: chunk, encoding, cb}, 'write')
+    // log({data: chunk, encoding, cb}, 'write')
 
     // Writing is not allowed if end has been called
-    if (m._ending) throw new WriteAfterEndError()
+    if (m._ending) {
+      // throw new WriteAfterEndError()
+      m.emit('error', new WriteAfterEndError())
+      return
+    }
 
     // ! 数据写入时连接，pipe 时可设置 header
     if (!m._currentRequest) m.request()
@@ -623,6 +673,7 @@ export default class Request extends Duplex {
     m.on('error', clearTimer)
     m.on('response', clearTimer)
     m.on('close', clearTimer)
+
     return m
   }
 
@@ -686,7 +737,7 @@ export default class Request extends Duplex {
     // If the response is not a redirect; return it as-is
     const {location} = response.headers
 
-    log({statusCode, headers: response.headers}, 'processResponse')
+    // log({statusCode, headers: response.headers}, 'processResponse')
 
     if (!location || opt.followRedirects === false || statusCode < 300 || statusCode >= 400) {
       // 非重定向，返回给原始回调处理
@@ -774,7 +825,9 @@ export default class Request extends Duplex {
 
     // Create the redirected request
     const redirectUrl = utils.resolveUrl(location, currentUrl)
+
     log({redirectUrl}, 'redirecting to')
+
     m._isRedirect = true
     // 覆盖原 url 解析部分，包括 protocol、hostname、port等
     utils.spreadUrlObject(redirectUrl, m.opt)
@@ -811,22 +864,23 @@ export default class Request extends Duplex {
   /**
    * 处理响应stream
    * 自动解压，透传流，需设置 decompress = false，避免解压数据
-   * @param {*} res
+   * @param {Response} res
+   * @returns {Response | stream.Readable}
    */
   processStream(res) {
     const m = this
     const {opt} = m
 
     const streams = [res]
-
+    let responseStream = res
     // 'transfer-encoding': 'chunked'时，无content-length，axios v1.2 不能自动解压
     const responseLength = +res.headers['content-length']
 
-    log('processStream', {
-      statusCode: res.statusCode,
-      responseLength,
-      headers: res.headers,
-    })
+    // log('processStream', {
+    //   statusCode: res.statusCode,
+    //   responseLength,
+    //   headers: res.headers,
+    // })
 
     if (opt.transformStream) {
       opt.transformStream.responseLength = responseLength
@@ -851,6 +905,7 @@ export default class Request extends Duplex {
         case 'compress':
         case 'x-compress':
           // add the unzipper to the body stream processing pipeline
+          // @ts-ignore
           streams.push(zlib.createUnzip(zlibOptions))
 
           // remove the content-encoding in order to not confuse downstream operations
@@ -858,9 +913,11 @@ export default class Request extends Duplex {
           break
 
         case 'deflate':
+          // @ts-ignore
           streams.push(new ZlibTransform())
 
           // add the unzipper to the body stream processing pipeline
+          // @ts-ignore
           streams.push(zlib.createUnzip(zlibOptions))
 
           // remove the content-encoding in order to not confuse downstream operations
@@ -869,6 +926,7 @@ export default class Request extends Duplex {
 
         case 'br':
           if (isBrotliSupported) {
+            // @ts-ignore
             streams.push(zlib.createBrotliDecompress(brotliOptions))
             res.headers['content-encoding'] = undefined
           }
@@ -878,10 +936,13 @@ export default class Request extends Duplex {
     }
 
     // 响应流，用于读
-    const responseStream = streams.length > 1 ? stream.pipeline(streams, utils.noop) : streams[0]
+    // @ts-ignore
+    responseStream = streams.length > 1 ? stream.pipeline(streams, utils.noop) : streams[0]
     // 将内部 responseStream 可读流 映射到 redirectReq
 
+    // @ts-ignore
     m.responseStream = responseStream
+    // @ts-ignore
     responseStream.redirectReq = m // 事情触发时引用
 
     // stream 模式，事件透传到 请求类
@@ -1053,7 +1114,9 @@ export default class Request extends Duplex {
 }
 
 /**
- *
+ * 释放请求，触发error事件
+ *  'error' event, and emit a 'close' event.
+ * Calling this will cause remaining data in the response to be dropped and the socket to be destroyed.
  * @param {*} request
  * @param {*} error
  */
@@ -1062,7 +1125,7 @@ function destroyRequest(request, error) {
     request.removeListener(ev, writeEventEmit[ev])
   }
   request.on('error', utils.noop)
-  request.destroy(error)
+  request.destroy(error) // 触发 error 事件
 }
 
 /**

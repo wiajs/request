@@ -11,6 +11,7 @@ declare namespace _default {
     export { isObject };
     export { isURL };
     export { isReadStream };
+    export { isStream };
     export { noop };
     export { parseUrl };
     export { spreadUrlObject };
@@ -38,6 +39,7 @@ declare function isFunction(thing: any): boolean;
 declare function isObject(thing: any): boolean;
 declare function isURL(value: any): boolean;
 declare function isReadStream(rs: any): any;
+declare function isStream(val: any): boolean;
 declare function noop(): void;
 declare function parseUrl(input: any): any;
 declare function spreadUrlObject(urlObject: any, target: any): any;

@@ -33,7 +33,7 @@ const log = Log({env: `wia:req:${name(import.meta.url)}`}) // __filename
  * @prop {*} [beforeRedirect]
  * @prop {boolean} [followRedirects]
  * @prop {number} [maxRedirects=21]
- * @prop {number} [maxBodyLength = 0]
+ * @prop {number} [maxBodyLength = -1]
  * @prop {*} [trackRedirects]
  * @prop {*} [data]
  */
@@ -94,7 +94,7 @@ const writeEvents = [
   'connect',
   'continue',
   'drain',
-  'error', // 未注册 'error' 事件处理程序，错误将冒泡到全局导致程序崩溃
+  // 'error', // 单独处理，未注册 'error' 事件处理程序，错误将冒泡到全局导致程序崩溃
   'finish',
   'information',
   'pipe',
@@ -144,6 +144,21 @@ const MaxBodyLengthExceededError = utils.createErrorType(
 
 const WriteAfterEndError = utils.createErrorType('ERR_STREAM_WRITE_AFTER_END', 'write after end')
 
+// request err
+const HostNotfoundError = utils.createErrorType('ERR_HOSTNOTFOUND', 'DNS 解析失败，主机名可能无效')
+const ConnRefusedError = utils.createErrorType(
+  'ERR_CONNREFUSED',
+  '连接被拒绝，目标服务器可能不可用'
+)
+const ConnTimedoutError = utils.createErrorType(
+  'ERR_CONNTIMEDOUT',
+  '请求超时，请检查网络连接或服务器负载'
+)
+const ConnResetError = utils.createErrorType(
+  'ERR_CONNRESET',
+  '连接被重置，可能是网络问题或服务器关闭了连接'
+)
+
 /**
  * An HTTP(S) request that can be redirected
  * wrap http.ClientRequest
@@ -187,7 +202,7 @@ export default class Request extends Duplex {
     super()
     const m = this
 
-    // log({opts}, 'constructor');
+    // log({opts}, 'new Request')
 
     // Initialize the request
     m.sanitizeOptions(opts)
@@ -351,6 +366,31 @@ export default class Request extends Duplex {
           socket.setKeepAlive(true, 1000 * 60)
         }
       )
+
+      // 请求error单独处理
+      // 'error' 事件处理，避免错误将冒泡到全局导致程序崩溃
+      req.on('error', err => {
+        destroyRequest(req) // 释放资源
+        // @ts-ignore
+        log.error({errcode: err?.code}, 'request')
+        // @ts-ignore
+        switch (err?.code) {
+          case 'ENOTFOUND':
+            m.emit('error', new HostNotfoundError())
+            break
+          case 'ECONNREFUSED':
+            m.emit('error', new ConnRefusedError())
+            break
+          case 'ETIMEDOUT':
+            m.emit('error', new ConnTimedoutError())
+            break
+          case 'ECONNRESET':
+            m.emit('error', new ConnResetError())
+            break
+          default:
+            m.emit('error', utils.createErrorType('ERR_CONNOTHER', `网络错误: ${err.message}`))
+        }
+      })
 
       // 接收req事件，转发 到 request 上发射，网络关闭事件，触发 error
       for (const ev of writeEvents) req.on(ev, writeEventEmit[ev])
@@ -983,8 +1023,8 @@ export default class Request extends Duplex {
    * @override -  重写父类方法
    * @template T - 需要模板
    * @param {T & stream.Writable} dest - The writable stream to which data is written.
-   * @param {Object} [opts] - Optional configuration object.
-   * @param {boolean} [opts.end=true] - Whether to end the writable stream when the readable stream ends.
+   * @param {Object} [opt] - Optional configuration object.
+   * @param {boolean} [opt.end=true] - Whether to end the writable stream when the readable stream ends.
    * @returns {T} The destination stream.
    */
   pipe(dest, opts = {}) {

@@ -19,6 +19,7 @@ const log = Log({env: `wia:req:${name(import.meta.url)}`}) // __filename
  * @prop {string} [url]
  * @prop {'http:' | 'https:'} [protocol]
  * @prop {string} [host]
+ * @prop {string} [hostname]
  * @prop {string} [family]
  * @prop {string} [path]
  * @prop {string} [method]
@@ -50,7 +51,7 @@ const WritebBeenAbortedError = utils.createErrorType(
   const looksLikeBrowser = typeof window !== 'undefined' && typeof document !== 'undefined'
   const looksLikeV8 = utils.isFunction(Error.captureStackTrace)
   if (!looksLikeNode && (looksLikeBrowser || !looksLikeV8)) {
-    console.warn('The follow-redirects package should be excluded from browser builds.')
+    log.warn('The follow-redirects package should be excluded from browser builds.')
   }
 })()
 
@@ -65,7 +66,7 @@ const WritebBeenAbortedError = utils.createErrorType(
  * @param {string | Opts} uri/opts
  * @param {Opts | Cb} [opts] /cb
  * @param {Cb} [cb]
- * @returns {{opts: Opts, cb: Cb}}
+ * @returns {{opt: Opts, cb: Cb}}
  */
 function init(uri, opts, cb) {
   let R
@@ -101,18 +102,28 @@ function init(uri, opts, cb) {
     }
 
     // copy options
-    opts = {
+    /** @type {Opts} */
+    const opt = {
       // @ts-ignore
       ...uri,
       ...opts,
     }
 
-    // @ts-ignore
-    if (!utils.isString(opts.host) && !utils.isString(opts.hostname)) opts.hostname = '::1'
-    // @ts-ignore
-    if (opts.method) opts.method = opts.method.toUpperCase()
+    if (!utils.isString(opt.host) && !utils.isString(opt.hostname)) opt.hostname = '::1'
+    opt.method = (opt.method ?? 'get').toUpperCase()
 
-    R = {opts, cb}
+    // follow-redirects does not skip comparison, so it should always succeed for axios -1 unlimited
+    opt.maxBodyLength = opt.maxBodyLength ?? Number.POSITIVE_INFINITY
+    opt.maxRedirects = opt.maxRedirects ?? 21
+    if (opt.maxRedirects === 0) opt.followRedirects = false
+    opt.headers = opt.headers ?? {
+      Accept: 'application/json, text/plain, */*',
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36 Edg/107.0.1418.35',
+      'Accept-Encoding': 'gzip, compress, deflate, br',
+    }
+
+    R = {opt, cb}
     // log({R}, 'init')
   } catch (e) {
     log.err(e, 'init')
@@ -130,44 +141,24 @@ function init(uri, opts, cb) {
     maxRedirects: _.maxRedirects,
     maxBodyLength: _.maxBodyLength,
  * @param {string | Opts} uri /options
- * @param {Opts | Cb} [options] /callback
+ * @param {Opts | Cb} [opts] /callback
  * @param {Cb} [callback] /null
  * @returns {Request}
  */
-function request(uri, options, callback) {
+function request(uri, opts, callback) {
   let R = null
 
   try {
     // @ts-ignore
-    const {opts, cb} = init(uri, options, callback)
+    const {opt, cb} = init(uri, opts, callback)
     // log.error({uri, options, opts}, 'request')
 
-    const {data, stream} = opts
+    const {data, stream} = opt
     // data 在本函数完成处理，不传递到 request
-    opts.data = undefined
+    opt.data = undefined
 
     // @ts-ignore
-    const req = new Request(opts, cb)
-
-    // 'error' 事件处理，避免错误将冒泡到全局导致程序崩溃
-    req.on('error', err => {
-      switch (err.code) {
-        case 'ENOTFOUND':
-          console.error('DNS 解析失败，主机名可能无效。')
-          break
-        case 'ECONNREFUSED':
-          console.error('连接被拒绝，目标服务器可能不可用。')
-          break
-        case 'ETIMEDOUT':
-          console.error('请求超时，请检查网络连接或服务器负载。')
-          break
-        case 'ECONNRESET':
-          console.error('连接被重置，可能是网络问题或服务器关闭了连接。')
-          break
-        default:
-          console.error(`未处理的错误: ${err.message}`)
-      }
-    })
+    const req = new Request(opt, cb)
 
     // 非流模式，自动发送请求，流模式通过流写入发送
     if (!stream) {
@@ -212,7 +203,7 @@ function request(uri, options, callback) {
 }
 
 /**
- * 执行简单的数据（支持strean）请求
+ * 执行简单的数据（支持stream）请求
  * 非流模式，直接写入数据流，流模式，由管道触发，或手动调用 end() data.pipe 写入数据
  * 复杂数据，请使用 @wiajs/req库（fork from axios），该库封装了当前库，提供了更多功能
  * organize params for patch, post, put, head, del

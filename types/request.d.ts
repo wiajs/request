@@ -44,9 +44,7 @@ export default class Request extends stream.Duplex {
     processResponse(response: Response): void;
     _isRedirect: boolean;
     processStream(res: Response): Response | stream.Readable;
-    override pipe<T>(dest: T & stream.Writable, opts?: {
-        end?: boolean;
-    }): T;
+    override pipe<T>(dest: T & stream.Writable, opts?: {}): T;
     unpipe(dest: stream.Writable): this;
     pipeDest(dest: any): void;
     pause(): this;

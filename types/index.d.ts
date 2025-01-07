@@ -7,6 +7,7 @@ export type Opts = {
     url?: string;
     protocol?: "http:" | "https:";
     host?: string;
+    hostname?: string;
     family?: string;
     path?: string;
     method?: string;
@@ -24,7 +25,7 @@ export type Opts = {
     trackRedirects?: any;
 };
 export type Cb = (res: Response, stream?: stream.Readable) => void;
-declare function request(uri: string | Opts, options?: Opts | Cb, callback?: Cb): Request;
+declare function request(uri: string | Opts, opts?: Opts | Cb, callback?: Cb): Request;
 declare namespace request {
     export let get: (url: string | Opts, opts?: Opts | Cb, cb?: Cb) => void;
     export let head: (url: string | Opts, opts?: Opts | Cb, cb?: Cb) => void;

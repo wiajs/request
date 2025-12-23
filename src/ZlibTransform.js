@@ -1,11 +1,11 @@
-import stream from 'node:stream'
+import stream from 'stream'
 
 class ZlibTransform extends stream.Transform {
   /**
-   * 
-   * @param {*} chunk 
-   * @param {*} encoding 
-   * @param {*} callback 
+   *
+   * @param {*} chunk
+   * @param {*} encoding
+   * @param {*} callback
    */
   __transform(chunk, encoding, callback) {
     this.push(chunk)
@@ -13,10 +13,10 @@ class ZlibTransform extends stream.Transform {
   }
 
   /**
-   * 
-   * @param {*} chunk 
-   * @param {*} encoding 
-   * @param {*} callback 
+   *
+   * @param {*} chunk
+   * @param {*} encoding
+   * @param {*} callback
    */
   _transform(chunk, encoding, callback) {
     if (chunk.length !== 0) {

@@ -1,7 +1,15 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.8.0/schema.json",
-  "organizeImports": {
-    "enabled": true
+  "$schema": "https://biomejs.dev/schemas/2.3.9/schema.json",
+  "assist": {
+    "enabled": true,
+    "actions": {
+      "source": {
+        "recommended": true
+      }
+    }
+  },
+  "files": {
+    "includes": ["src/**/*", "config/**/*", "./*.js", "./*.json", "!bin/**/*"]
   },
   "vcs": {
     "enabled": true,
@@ -32,12 +40,18 @@
       "style": {
         "noParameterAssign": "warn"
       },
+      "correctness": {
+        "useJsxKeyInIterable": "off"
+      },
       "complexity": {
         "noForEach": "warn",
-        "noStaticOnlyClass": "warn",
+        "noStaticOnlyClass": "off",
         "noUselessSwitchCase": "error",
         "useFlatMap": "error",
         "noUselessThisAlias": "off"
+      },
+      "a11y": {
+        "useValidAnchor": "off"
       }
     }
   }

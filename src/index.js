@@ -4,8 +4,8 @@
  * 修改以支持http、https 代理服务器
  * 代理模式下，http or https 请求，取决于 proxy 代理服务器，而不是目的服务器。
  */
-import stream from 'node:stream'
-import {log as Log, name} from '@wiajs/log'
+import { log as Log, name } from '@wiajs/log'
+import stream from 'stream'
 import Request from './request.js'
 import utils from './utils.js'
 
@@ -151,7 +151,7 @@ function request(uri, opts, callback) {
   try {
     // @ts-ignore
     const {opt, cb} = init(uri, opts, callback)
-    // log.error({uri, options, opts}, 'request')
+    // log({uri, opt, opts}, 'request')
 
     const {data, stream} = opt
     // data 在本函数完成处理，不传递到 request

@@ -2,7 +2,7 @@
   "name": "@wiajs/request",
   "description": "Stream HTTP request client.",
   "keywords": ["http", "simple", "util", "utility"],
-  "version": "3.0.33",
+  "version": "3.0.39",
   "type": "module",
   "main": "index.js",
   "types": "types/index.d.ts",
@@ -26,7 +26,6 @@
   },
   "scripts": {
     "build": "cross-env NODE_ENV=production gulp build -f gulpfile.js",
-    "lib": "swc --config-file ./.swcrc ./src -d lib -w --strip-leading-paths",
     "test": "npm run lint && npm run test-ci && npm run test-browser",
     "test-ci": "taper tests/test-*.js",
     "test-cov": "nyc --reporter=lcov tape tests/test-*.js",
@@ -37,14 +36,14 @@
   "contributors": ["Mikeal Rogers <mikeal.rogers@gmail.com>"],
   "repository": {
     "type": "git",
-    "url": "https://github.com/request/request.git"
+    "url": "https://github.com/@wiajs/request.git"
   },
   "license": "MIT",
   "publishConfig": {
     "access": "public"
   },
   "engines": {
-    "node": ">= 6"
+    "node": ">= 13.14"
   },
   "dependencies": {
     "@wiajs/log": "^4.3.18",

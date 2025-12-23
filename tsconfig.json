@@ -24,7 +24,8 @@
     "strictNullChecks": false, // null、undefined 可赋给其他类型
     "useUnknownInCatchVariables": false,
     "baseUrl": ".", // 解析非相对模块的基地址，默认是当前目录
-    "outDir": "./dist", // 指定输出目录
+    // "outDir": "./dist", // 指定ts输出目录
+    "outDir": "./types", // 指定类型输出目录
 
     "noImplicitAny": true, // 不允许隐式的any类型
     "removeComments": true, // 删除注释
@@ -36,5 +37,5 @@
     "sourceMap": false // 生成目标文件的sourceMap文件，用于调试
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "bin", "lib", "dist"]
+  "exclude": ["node_modules", "bin", "dist", "lib"]
 }

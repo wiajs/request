@@ -2,20 +2,22 @@
  * fork from follow-redirects
  * https://github.com/follow-redirects/follow-redirects
  */
-import http from 'node:http'
-import https from 'node:https'
-import assert from 'node:assert'
-import url from 'node:url'
-import stream from 'node:stream'
-import {Duplex} from 'node:stream' // Writable 流改为读写双工
-import zlib from 'node:zlib'
+import { log as Log, name } from '@wiajs/log'
+import assert from 'assert'
+import http from 'http'
+import https from 'https'
 import mime from 'mime-types'
-import {log as Log, name} from '@wiajs/log'
+import stream, { Duplex } from 'stream'
+import url from 'url'
+import zlib from 'zlib'
 import ZlibTransform from './ZlibTransform.js'
-import utils from './utils.js'
 import Caseless from './caseless.js'
+import utils from './utils.js'
 
 const log = Log({env: `wia:req:${name(import.meta.url)}`}) // __filename
+
+// 检测是否在 Bun 环境
+const isBun = typeof process !== 'undefined' && process.versions && process.versions.bun;
 
 /**
  * @typedef {object} Opts
@@ -334,23 +336,93 @@ export default class Request extends Duplex {
       // agents 优于 agent
       if (agents) {
         const scheme = protocol.slice(0, -1)
-        opt.agent = agents[scheme]
+        // [FIX] 仅当 agents 中存在对应协议的 agent 时才覆盖 opt.agent
+        // 防止 agents['https'] 为空时将 opt.agent 覆盖为 undefined，导致回退到 globalAgent
+        if (agents[scheme]) opt.agent = agents[scheme]
 
         // http 非隧道代理模式，模块以代理主机为准，其他以目的网址为准
         // 代理内部会根据代理协议选择 http(s) 发起请求创建连接
         if (protocol === 'http:' && agents.http) {
-          protocol =
-            agents.http.proxy && !agents.http.tunnel ? agents.http.proxy.protocol : protocol
+          // 注意：这里修改的是局部变量 protocol，用于选择 httpModule
+          // protocol 以proxy协议为准
+          const {proxy} = agents.http
+          if (proxy && !agents.http.tunnel) protocol = proxy.protocol
         }
+
+        // log({scheme, agents, protocol}, 'request')
       }
 
       const httpModule = httpModules[protocol]
       if (!httpModule) throw TypeError(`Unsupported protocol: ${protocol}`)
 
-      // log({opt, protocol}, 'request')
+      // ============================================================
+      // [FIX] 针对 Bun 的终极修复：构建纯净的 Request Options
+      // ============================================================
+
+      // 1. 定义标准 Node.js http.request 接受的字段白名单
+      // 避免传入 agents, followRedirects 等杂质干扰 Bun 的解析
+      const nativeFields = [
+        'agent',
+        'auth',
+        'createConnection',
+        'defaultPort',
+        'family',
+        'headers',
+        'hints',
+        'host',
+        'hostname',
+        'insecureHTTPParser',
+        'localAddress',
+        'localPort',
+        'lookup',
+        'maxHeaderSize',
+        'method',
+        'path',
+        'port',
+        'protocol',
+        'rejectUnauthorized', // 关键：如果 Agent 被忽略，这个选项作为保底
+        'servername',
+        'setHost',
+        'socketPath',
+        'timeout',
+        'signal',
+      ]
+
+      // 2. 创建纯净的 options 对象
+      const reqOpt = {}
+
+      // 3. 显式拷贝字段 (同时也解决了 [Object: null prototype] 问题)
+      for (const field of nativeFields) {
+        if (opt[field] !== undefined) reqOpt[field] = opt[field]
+      }
+
+      // 端口修正逻辑 (保持不变)
+      if (!reqOpt.port) reqOpt.port = protocol === 'https:' ? 443 : 80
+      else if (reqOpt.port) reqOpt.port = Number(reqOpt.port)
+
+      // 再次显式确保 agent 存在于新对象中 (防御性编程)
+      // if (opt.agent) reqOpt.agent = opt.agent
+      // ============================================================
+      // [FIX] 针对 Bun 的强制代理修复
+      // ============================================================
+      if (opt.agent) {
+        // 1. 仍然赋值 agent，以便 Node.js 环境正常工作
+        reqOpt.agent = opt.agent
+
+        // 2. 【关键】针对 Bun：直接将 Agent 的创建连接方法暴露给 Request
+        // Bun 的 http.request 可能忽略 agent 对象，但通常会尊重 createConnection 选项
+        reqOpt.createConnection = (args, cb) => {
+          log({args}, 'Direct createConnection triggered via options')
+          // 强制调用你的 Agent 的 createConnection
+          // 注意：需要确保 this 上下文正确指向 opt.agent
+          return opt.agent.createConnection(args, cb)
+        }
+      }
+
+      log({reqOpt, protocol, agentType: reqOpt.agent ? 'custom' : 'global'}, 'request')
       // Create the native request and set up its event handlers
       // @ts-ignore
-      const req = httpModule.request(opt, m._onResponse)
+      const req = httpModule.request(reqOpt, m._onResponse)
       m._currentRequest = req
       // @ts-ignore
       req.redirectReq = m
@@ -363,7 +435,8 @@ export default class Request extends Duplex {
         'socket',
         /** @param {*} socket */ socket => {
           // default interval of sending ack packet is 1 minute
-          socket.setKeepAlive(true, 1000 * 60)
+          // [FIX] 增加 socket 存在性检查，防止极少数情况下的 race condition
+          if (socket) socket.setKeepAlive(true, 1000 * 60)
         }
       )
 
@@ -372,7 +445,7 @@ export default class Request extends Duplex {
       req.on('error', err => {
         destroyRequest(req) // 释放资源
         // @ts-ignore
-        log.error({errcode: err?.code}, 'request')
+        log.error({errcode: err?.code, msg: err?.message}, 'request error')
         // @ts-ignore
         switch (err?.code) {
           case 'ENOTFOUND':
@@ -386,6 +459,13 @@ export default class Request extends Duplex {
             break
           case 'ECONNRESET':
             m.emit('error', new ConnResetError())
+            break
+          // [FIX] 捕获证书错误，给予更友好的提示（虽然修复后不应再出现此错误）
+          case 'DEPTH_ZERO_SELF_SIGNED_CERT':
+            m.emit(
+              'error',
+              utils.createErrorType('ERR_TLS_CERT', `SSL证书错误(自签名): ${err.message}`)
+            )
             break
           default:
             m.emit('error', utils.createErrorType('ERR_CONNOTHER', `网络错误: ${err.message}`))

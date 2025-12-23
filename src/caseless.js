@@ -73,9 +73,9 @@ export default class Caseless {
   }
 
   /**
-   * 
-   * @param {string} name 
-   * @returns 
+   *
+   * @param {string} name
+   * @returns
    */
   del(name) {
     name = String(name).toLowerCase()
@@ -102,11 +102,11 @@ export function httpify(resp, headers) {
   const c = new Caseless(headers)
 
   /**
-   * 
-   * @param {string} key 
-   * @param {*} value 
-   * @param {*} clobber 
-   * @returns 
+   *
+   * @param {string} key
+   * @param {*} value
+   * @param {*} clobber
+   * @returns
    */
   resp.setHeader = (key, value, clobber) => {
     if (typeof value === 'undefined') return
@@ -114,8 +114,8 @@ export function httpify(resp, headers) {
   }
 
   /**
-   * 
-   * @param {string} key 
+   *
+   * @param {string} key
    * @returns {boolean|string}
    */
   resp.hasHeader = key => {
@@ -123,8 +123,8 @@ export function httpify(resp, headers) {
   }
 
   /**
-   * 
-   * @param {string} key 
+   *
+   * @param {string} key
    * @returns {*}
    */
   resp.getHeader = key => {
@@ -132,8 +132,8 @@ export function httpify(resp, headers) {
   }
 
   /**
-   * 
-   * @param {string} key 
+   *
+   * @param {string} key
    * @returns {boolean}
    */
   resp.removeHeader = key => {

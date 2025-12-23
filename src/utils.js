@@ -1,8 +1,8 @@
 /**
  * utils for request
  */
-import url from 'node:url'
-import assert from 'node:assert'
+import assert from 'assert'
+import url from 'url'
 
 const {URL} = url
 
